@@ -1,0 +1,14 @@
+calendar.csv
+sales_train_evaluation.csv
+sales_train_validation.csv
+sell_prices.csv
+df_preprocessed.parquet
+data/processed/parquet_4_partes/
+.venv/
+.venv312/
+backend/.venv/
+backend/__pycache__/
+backend/app/__pycache__/
+frontend/node_modules/
+frontend/dist/
+.DS_Store

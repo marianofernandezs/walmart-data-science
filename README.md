@@ -1,21 +1,95 @@
-# Optimización de Inventario
+# Optimización de Inventario mediante Pronóstico de Demanda Jerárquico
 
-## 1. Contextualización del Proyecto
-Este proyecto aborda la gestión de inventarios en el sector del retail masivo (basado en el ecosistema de Walmart), enfocándose en la predicción exacta de ventas diarias para miles de productos (SKUs) en diversos estados y tiendas. El objetivo es mitigar el "efecto látigo" (Bullwhip Effect) y optimizar los costos operativos mediante modelos de aprendizaje automático avanzados.
+Aplicación full-stack local para la fase de deployment de CRISP-DM. El sistema combina un dashboard React con una API FastAPI para consultar predicciones de demanda, alertas de stock y métricas técnicas.
 
-## 2. Definición del Problema y KPI
-- **Problemática**: Necesidad de generar pronósticos precisos para un horizonte de 28 días, enfrentando una demanda altamente intermitente (67.99% de ceros) y manteniendo la coherencia jerárquica entre categorías y tiendas
-- **KPI Principal**: WRMSSE (Weighted Root Mean Squared Scaled Error), métrica que prioriza el impacto económico de los productos de alta rotación
-- **Criterio de Éxito**: Lograr un pronóstico auditable y explicable (explicabilidad técnica vía SHAP) que supere a los modelos estadísticos tradicionales
+## Qué encontré en el repositorio
 
-## 3. Arquitectura del Pipeline de Datos
-El proyecto implementa una arquitectura reproducible y optimizada para grandes volúmenes de datos:
-1. Ingesta: Carga de fuentes crudas desde archivos CSV (Sales, Calendar, Prices).
-2. Staging (Optimización): Transformación de tipos de datos a int16 y category, reduciendo el consumo de memoria de 3.2 GB a ~678 MB (Reducción del 78%).
-3. Curated (Transformación): Cambio de formato Wide-to-Long mediante pd.melt() para estructurar el dataset como una serie de tiempo unificada.
-4. Persistencia: Exportación a formato Parquet para preservar la optimización de memoria y servir como checkpoint para el modelado.
+- Notebooks previos: `notebooks/01-eda_and_cleaning.ipynb` y `notebooks/02-modeling_and_evaluation_final_rubrica.ipynb`
+- Modelos serializados detectados en `models/`
+- Modelo exportable integrado: se toma como base `models/best_forecasting_model_part_2_histgradientboosting.pkl`
 
-## 4. Hallazgos del Análisis Exploratorio (EDA)
-- **Intermitencia Extrema**: Se confirmó que aproximadamente 7 de cada 10 registros tienen ventas de cero, lo que invalida métodos estadísticos convencionali.
-- **Patrones de Venta**: Los Sábados y Domingos representan los picos de demanda semanal.
-- **Riesgos (Outliers)**: La categoría FOODS presenta la mayor cantidad de valores atípicos, reflejando picos por eventos especiales o compras masivas, lo que justifica el uso de métricas de error escaladas.
+## Dónde debe ir el modelo real
+
+- Ruta obligatoria del backend: `backend/models/model.pkl`
+- Formato esperado: bundle `joblib` con estas claves:
+  - `model`
+  - `feature_cols`
+  - `categorical_cols`
+  - `boolean_cols`
+  - `float_cols`
+  - `category_mappings`
+  - `metrics` (opcional, pero recomendado)
+
+Si `backend/models/model.pkl` no existe o falla al cargar, el backend activa automáticamente `mock_fallback`.
+
+## Estructura de features esperada por `model_service.py`
+
+`backend/app/model_service.py` construye una fila de inferencia con esta estructura:
+
+- `sell_price`
+- `snap_active`
+- `has_event`
+- `month`
+- `year`
+- `dayofweek`
+- `weekofyear`
+- `is_weekend`
+- `lag_7`
+- `lag_14`
+- `lag_28`
+- `rolling_mean_7`
+- `rolling_mean_28`
+- `item_id`
+- `dept_id`
+- `cat_id`
+- `store_id`
+- `state_id`
+
+Las categóricas se codifican con `category_mappings` cuando se usa el modelo real. Si llega un valor desconocido, se usa un índice seguro por defecto.
+
+## Arquitectura
+
+- Frontend: React + Vite en `http://localhost:5173`
+- Backend: FastAPI + Uvicorn en `http://localhost:8000`
+- Modelo: `joblib` si existe `backend/models/model.pkl`; si no, fallback mock con reglas de negocio realistas
+- Datos demo: `backend/data/sample_products.csv`
+
+## Instalación backend
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Swagger:
+
+- [http://localhost:8000/docs](http://localhost:8000/docs)
+
+## Instalación frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Endpoints principales
+
+- `GET /`
+- `GET /health`
+- `GET /products`
+- `POST /predict`
+- `POST /batch-predict`
+- `GET /alerts`
+- `GET /metrics`
+- `GET /architecture`
+
+## Documentación adicional
+
+- `docs/architecture.md`
+- `docs/api_tests.md`
+- `docs/deployment_evidence.md`
+- `docs/technical_evaluation.md`
