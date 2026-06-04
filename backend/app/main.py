@@ -3,15 +3,21 @@ from __future__ import annotations
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from .feature_service import ingestion_row_to_prediction_request
+from .ingestion_service import ingestion_service
 from .inventory_service import build_alert_record, list_products
 from .metrics_service import metrics_service
 from .model_service import model_service
 from .schemas import (
     ArchitectureResponse,
     BatchPredictionRequest,
+    IngestionJSONRequest,
+    IngestionPreviewResponse,
+    IngestionSchemaResponse,
+    IngestionSummaryResponse,
     MetricsResponse,
     PredictionRequest,
     PredictionResponse,
@@ -21,6 +27,7 @@ from .schemas import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     model_service.load_model()
+    ingestion_service.get_schema()
     yield
 
 
@@ -88,7 +95,16 @@ def predict(payload: PredictionRequest):
 @app.post("/batch-predict")
 def batch_predict(payload: BatchPredictionRequest):
     try:
-        predictions = [model_service.predict(item) for item in payload.items]
+        items = payload.items or []
+        if payload.source_file:
+            source_rows = ingestion_service.get_processed_rows(payload.source_file)
+            items.extend(
+                ingestion_row_to_prediction_request(row, forecast_horizon=7)
+                for row in source_rows
+            )
+        if not items:
+            raise HTTPException(status_code=400, detail="Provide items or source_file")
+        predictions = [model_service.predict(item) for item in items]
         metrics_service.record_prediction(len(predictions))
         return {"items": predictions, "count": len(predictions)}
     except Exception as exc:
@@ -105,8 +121,8 @@ def alerts():
             category=product.category,
             current_stock=product.current_stock,
             price=product.price,
-            snap_day=1 if product.state_id in {"CA", "TX"} else 0,
-            event_day=1 if product.category == "FOODS" else 0,
+            snap_day=product.snap_day if product.snap_day is not None else (1 if product.state_id in {"CA", "TX"} else 0),
+            event_day=product.event_day if product.event_day is not None else (1 if product.category == "FOODS" else 0),
             forecast_horizon=7,
         )
         prediction = model_service.predict(request)
@@ -127,14 +143,55 @@ def metrics():
 def architecture():
     return {
         "frontend": "React + Vite dashboard on localhost:5173",
-        "backend": "FastAPI + Uvicorn on localhost:8000 with Swagger and CORS",
+        "backend": "FastAPI + Uvicorn on localhost:8000 with Swagger, CORS and ingestion endpoints",
         "model": "Joblib-loaded HistGradientBoosting bundle or mock fallback",
-        "storage": "CSV sample products + local model artifact under backend/models",
+        "storage": "CSV sample products + local model artifact + ingested/raw/processed/rejected files",
         "flow": [
             "Frontend captura parámetros de inventario",
+            "Frontend puede subir CSV o JSON para ingesta",
+            "Ingestion service valida, transforma y guarda archivos locales",
             "API valida entrada con Pydantic",
             "Model service carga modelo real o usa fallback",
             "Inventory logic calcula stock recomendado y riesgo",
             "Dashboard renderiza predicción, alertas y métricas",
         ],
     }
+
+
+@app.get("/ingestion/schema", response_model=IngestionSchemaResponse)
+def ingestion_schema():
+    return ingestion_service.get_schema()
+
+
+@app.post("/ingestion/upload-csv", response_model=IngestionSummaryResponse)
+async def ingestion_upload_csv(file: UploadFile = File(...)):
+    content = await file.read()
+    return ingestion_service.process_csv_upload(file.filename or "upload.csv", content)
+
+
+@app.post("/ingestion/json", response_model=IngestionSummaryResponse)
+def ingestion_json(payload: IngestionJSONRequest):
+    return ingestion_service.process_json_records(payload.items)
+
+
+@app.get("/ingestion/files")
+def ingestion_files():
+    return {"items": ingestion_service.list_files()}
+
+
+@app.get("/ingestion/preview", response_model=IngestionPreviewResponse)
+def ingestion_preview(filename: str | None = None):
+    return ingestion_service.preview(filename)
+
+
+@app.delete("/ingestion/files/{filename}")
+def ingestion_delete_file(filename: str):
+    deleted = ingestion_service.delete_file(filename)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"status": "deleted", "filename": filename}
+
+
+@app.delete("/ingestion/clear")
+def ingestion_clear():
+    return ingestion_service.clear_all()

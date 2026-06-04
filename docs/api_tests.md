@@ -83,3 +83,10 @@ curl http://localhost:8000/metrics
 ```bash
 curl http://localhost:8000/architecture
 ```
+
+## Ingesta
+
+```bash
+curl http://localhost:8000/ingestion/schema
+curl http://localhost:8000/ingestion/files
+```

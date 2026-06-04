@@ -28,6 +28,8 @@ export default function PredictionForm({ products, value, onChange, onSubmit, lo
       category: selected.category,
       current_stock: selected.current_stock,
       price: selected.price,
+      snap_day: selected.snap_day ?? value.snap_day,
+      event_day: selected.event_day ?? value.event_day,
     })
   }
 

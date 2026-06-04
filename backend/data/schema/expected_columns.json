@@ -1,0 +1,25 @@
+{
+  "required_columns": [
+    "sku",
+    "store_id",
+    "category",
+    "date",
+    "current_stock",
+    "price",
+    "snap_day",
+    "event_day",
+    "sales"
+  ],
+  "allowed_categories": ["FOODS", "HOBBIES", "HOUSEHOLD"],
+  "validations": {
+    "sku": "string requerido",
+    "store_id": "string requerido",
+    "category": "FOODS | HOBBIES | HOUSEHOLD",
+    "date": "YYYY-MM-DD",
+    "current_stock": ">= 0",
+    "price": "> 0",
+    "snap_day": "0 o 1",
+    "event_day": "0 o 1",
+    "sales": ">= 0"
+  }
+}

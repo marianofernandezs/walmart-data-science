@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from .utils import (
 
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "model.pkl"
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +43,15 @@ class LoadedModel:
             "R2": metrics.get("R2"),
             "data_source_label": metrics.get("data_source_label"),
         }
+
+    @property
+    def feature_order(self) -> list[str]:
+        estimator = self.estimator
+        if hasattr(estimator, "feature_names_in_"):
+            return [str(column) for column in estimator.feature_names_in_]
+        if self.bundle.get("feature_cols"):
+            return [str(column) for column in self.bundle["feature_cols"]]
+        return []
 
 
 class ModelService:
@@ -117,19 +128,44 @@ class ModelService:
             except Exception as exc:
                 self.model_error = str(exc)
                 self.mode = "mock_fallback"
+                logger.exception("Model prediction failed; falling back to mock mode")
         return self._predict_with_mock(payload)
 
     def _predict_with_model(self, payload: PredictionRequest) -> dict[str, Any]:
-        bundle = self.loaded_model.bundle
-        feature_rows = self._build_feature_rows(payload, use_model=True)
-        frame = pd.DataFrame(feature_rows)
-        forecast = bundle["model"].predict(frame[bundle["feature_cols"]])
-        return self._format_prediction(payload, forecast, "trained_model", feature_rows[0])
+        standard_feature_rows = self._build_feature_rows(payload, use_model=False)
+        standard_frame = pd.DataFrame(standard_feature_rows)
+        feature_order = self._resolve_feature_order(standard_frame)
+        model_input = self._prepare_model_input(standard_frame, feature_order)
 
-    def _predict_with_mock(self, payload: PredictionRequest) -> dict[str, Any]:
-        feature_rows = self._build_feature_rows(payload, use_model=False)
+        try:
+            forecast = self.loaded_model.estimator.predict(model_input)
+        except Exception as exc:
+            self.model_error = str(exc)
+            logger.exception(
+                "Feature mismatch or model inference failure; using safe fallback",
+            )
+            return self._predict_with_mock(
+                payload,
+                mode="mock_fallback_due_to_feature_mismatch",
+                standard_feature_rows=standard_feature_rows,
+            )
+
+        return self._format_prediction(
+            payload,
+            forecast,
+            "trained_model",
+            standard_feature_rows[0],
+        )
+
+    def _predict_with_mock(
+        self,
+        payload: PredictionRequest,
+        mode: str = "mock_fallback",
+        standard_feature_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        feature_rows = standard_feature_rows or self._build_feature_rows(payload, use_model=False)
         forecast = [row["rolling_mean_7"] * row["seasonal_factor"] for row in feature_rows]
-        return self._format_prediction(payload, forecast, "mock_fallback", feature_rows[0])
+        return self._format_prediction(payload, forecast, mode, feature_rows[0])
 
     def _format_prediction(
         self,
@@ -207,6 +243,51 @@ class ModelService:
             lag_values.append(rolling_7)
             lag_values = lag_values[-4:]
         return rows
+
+    def _resolve_feature_order(self, standard_frame: pd.DataFrame) -> list[str]:
+        if not self.loaded_model:
+            return list(standard_frame.columns)
+
+        feature_order = self.loaded_model.feature_order
+        if feature_order:
+            return feature_order
+
+        return [
+            "sell_price", "snap_active", "has_event", "month", "year", "dayofweek",
+            "weekofyear", "is_weekend", "lag_7", "lag_14", "lag_28",
+            "rolling_mean_7", "rolling_mean_28", "item_id", "dept_id", "cat_id",
+            "store_id", "state_id",
+        ]
+
+    def _prepare_model_input(self, standard_frame: pd.DataFrame, feature_order: list[str]) -> pd.DataFrame:
+        if not self.loaded_model:
+            return standard_frame
+
+        encoded_frame = standard_frame.copy()
+        bundle = self.loaded_model.bundle
+        mappings = bundle.get("category_mappings", {})
+
+        for col in bundle.get("categorical_cols", []):
+            values = mappings.get(col, [])
+            encoded_frame[col] = encoded_frame[col].map(
+                lambda value: values.index(str(value)) if str(value) in values else 0
+            )
+
+        for col in bundle.get("boolean_cols", []):
+            encoded_frame[col] = encoded_frame[col].astype(int)
+
+        missing_columns = [column for column in feature_order if column not in encoded_frame.columns]
+        extra_columns = [column for column in encoded_frame.columns if column not in feature_order]
+
+        if missing_columns:
+            raise ValueError(
+                f"Feature mismatch: missing columns for model inference: {missing_columns}"
+            )
+
+        if extra_columns:
+            encoded_frame = encoded_frame.drop(columns=extra_columns, errors="ignore")
+
+        return encoded_frame[feature_order]
 
     def _encode_row(self, row: dict[str, Any], bundle: dict[str, Any]) -> dict[str, Any]:
         encoded = dict(row)

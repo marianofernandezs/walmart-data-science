@@ -53,6 +53,23 @@ Las categóricas se codifican con `category_mappings` cuando se usa el modelo re
 - Backend: FastAPI + Uvicorn en `http://localhost:8000`
 - Modelo: `joblib` si existe `backend/models/model.pkl`; si no, fallback mock con reglas de negocio realistas
 - Datos demo: `backend/data/sample_products.csv`
+- Ingesta: CSV o JSON hacia `backend/data/ingested/raw`, `processed` y `rejected`
+
+## Ingesta de datos
+
+- `GET /ingestion/schema`
+- `POST /ingestion/upload-csv`
+- `POST /ingestion/json`
+- `GET /ingestion/files`
+- `GET /ingestion/preview`
+- `DELETE /ingestion/files/{filename}`
+
+Los productos ingeridos se combinan con los productos base y pasan a alimentar:
+
+- `GET /products`
+- `GET /alerts`
+- `POST /batch-predict` usando `source_file` opcional
+- el dashboard del frontend
 
 ## Instalación backend
 
@@ -86,10 +103,14 @@ npm run dev
 - `GET /alerts`
 - `GET /metrics`
 - `GET /architecture`
+- endpoints de `ingestion/*`
 
 ## Documentación adicional
 
 - `docs/architecture.md`
 - `docs/api_tests.md`
+- `docs/data_ingestion.md`
 - `docs/deployment_evidence.md`
+- `docs/ingestion_api_tests.md`
+- `docs/ingestion_evidence.md`
 - `docs/technical_evaluation.md`

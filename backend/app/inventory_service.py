@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from .feature_service import normalize_processed_ingestion
 from .schemas import AlertRecord, ProductRecord
+from .storage_service import PROCESSED_DIR, ensure_storage_layout
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -29,12 +31,33 @@ def ensure_sample_products() -> Path:
 
 def get_products_df() -> pd.DataFrame:
     csv_path = ensure_sample_products()
-    return pd.read_csv(csv_path)
+    base_df = pd.read_csv(csv_path)
+    ensure_storage_layout()
+    processed_frames = []
+    for path in sorted(PROCESSED_DIR.glob("*.csv")):
+        try:
+            processed_frames.append(pd.read_csv(path))
+        except Exception:
+            continue
+    if processed_frames:
+        ingested_df = normalize_processed_ingestion(pd.concat(processed_frames, ignore_index=True))
+        merged = pd.concat([base_df, ingested_df], ignore_index=True, sort=False)
+        merged = merged.drop_duplicates(subset=["sku", "store_id"], keep="last")
+        return merged
+    return base_df
 
 
 def list_products() -> list[ProductRecord]:
     df = get_products_df()
-    return [ProductRecord(**row) for row in df.to_dict(orient="records")]
+    normalized_rows = []
+    for row in df.to_dict(orient="records"):
+        normalized_rows.append(
+            {
+                key: (None if pd.isna(value) else value)
+                for key, value in row.items()
+            }
+        )
+    return [ProductRecord(**row) for row in normalized_rows]
 
 
 def build_alert_record(row: dict, prediction: dict) -> AlertRecord:

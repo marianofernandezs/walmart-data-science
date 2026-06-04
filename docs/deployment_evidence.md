@@ -17,9 +17,11 @@
 - Confirmar que se muestra demanda, stock recomendado y nivel de riesgo
 - Confirmar que el panel de alertas carga productos simulados
 - Confirmar que el panel de métricas refleja estado API y modo de modelo
+- Confirmar que la ingesta CSV/JSON genera resumen y preview de datos procesados
 
 ## Evidencias sugeridas
 
 - Captura de Swagger operativo
 - Captura del dashboard con predicción generada
 - Captura de respuesta `curl` a `/predict`
+- Captura de respuesta de `/ingestion/upload-csv` o `/ingestion/json`
